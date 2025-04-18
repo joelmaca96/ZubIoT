@@ -1,0 +1,15 @@
+[submodule "componets/bi_firebase"]
+	path = componets/bi_firebase
+	url = git@gitlab.com:bihar4/tools-and-libs/bi_firebase.git
+[submodule "componets/bi_wifi"]
+	path = componets/bi_wifi
+	url = git@gitlab.com:bihar4/tools-and-libs/bi_wifi.git
+[submodule "components/bi_firebase"]
+	path = components/bi_firebase
+	url = git@gitlab.com:bihar4/tools-and-libs/bi_firebase.git
+[submodule "components/bi_wifi"]
+	path = components/bi_wifi
+	url = git@gitlab.com:bihar4/tools-and-libs/bi_wifi.git
+[submodule "components/bi_params"]
+	path = components/bi_params
+	url = git@gitlab.com:bihar4/tools-and-libs/bi_params.git
