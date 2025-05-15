@@ -4,35 +4,36 @@
 
 #include "bi_wifi.hpp"
 #include "bi_params.hpp"
+#include "bi_debug.h"
+#include "../custom_config.h"
 
 extern BIParams biParams;
 
-static const char *TAG = "wifi_controller";
-
 WiFiManager wifi_manager;
+LoggerPtr g_commLogger;
 
 void onWiFiStateChanged(WiFiManager::WiFiState state, void* data) {
     switch (state) {
         case WiFiManager::WiFiState::DISCONNECTED:
         {
-            ESP_LOGI(TAG, "WiFi desconectado");
+            BI_DEBUG_INFO(g_commLogger, "WiFi desconectado");
             bool connected = false;
             biParams.updateStateValue("wifiConnected", &connected, sizeof(bool), true);
            
             break;
         }
         case WiFiManager::WiFiState::CONNECTING:
-            ESP_LOGI(TAG, "WiFi conectando...");
+            BI_DEBUG_INFO(g_commLogger, "WiFi conectando...");
             break;
         case WiFiManager::WiFiState::CONNECTED:
         {
-            ESP_LOGI(TAG, "WiFi conectado!");
+            BI_DEBUG_INFO(g_commLogger, "WiFi conectado!");
             
             // Obtén una referencia al WiFiManager
             WiFiManager* wifi = static_cast<WiFiManager*>(data);
             if (wifi) {
-                ESP_LOGI(TAG, "Conectado a la red: %s", wifi->getSSID().c_str());
-                ESP_LOGI(TAG, "Dirección IP: %s", wifi->getIPAddress().c_str());
+                BI_DEBUG_INFO(g_commLogger, "Conectado a la red: %s", wifi->getSSID().c_str());
+                BI_DEBUG_INFO(g_commLogger, "Dirección IP: %s", wifi->getIPAddress().c_str());
             }
             bool connected = true;
             biParams.updateStateValue("wifiConnected", &connected, sizeof(bool), true);
@@ -40,10 +41,10 @@ void onWiFiStateChanged(WiFiManager::WiFiState state, void* data) {
             break;
         }
         case WiFiManager::WiFiState::PROVISIONING:
-            ESP_LOGI(TAG, "Modo de provisioning WiFi activo");
+            BI_DEBUG_INFO(g_commLogger, "Modo de provisioning WiFi activo");
             break;
         case WiFiManager::WiFiState::ERROR:
-            ESP_LOGE(TAG, "Error en la conexión WiFi");
+            BI_DEBUG_ERROR(g_commLogger, "Error en la conexión WiFi");
             biParams.incrementCounter("wifiFailCount", 1, true);
             break;
     }
@@ -61,14 +62,15 @@ void onWiFiStateChanged(WiFiManager::WiFiState state, void* data) {
  * tu código principal allí.
  */
 bool wifi_controller_init(void) {
-    ESP_LOGI(TAG, "Iniciando aplicación...");
+    g_commLogger = createLogger("COMM", DEBUG, true);
+    BI_DEBUG_INFO(g_commLogger, "Iniciando aplicación...");
     
     // Crear instancia de WiFiManager
     wifi_manager = WiFiManager("wifi");
     
     // Inicializar el gestor WiFi
     if (!wifi_manager.init()) {
-        ESP_LOGE(TAG, "Error al inicializar WiFi Manager");
+        BI_DEBUG_ERROR(g_commLogger, "Error al inicializar WiFi Manager");
         return false;
     }
     

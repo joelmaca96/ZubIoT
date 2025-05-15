@@ -3,14 +3,17 @@
         {
             "name": "ESP-IDF",
             "compilerPath": "${config:idf.toolsPath}/tools/riscv32-esp-elf/esp-14.2.0_20241119/riscv32-esp-elf/bin/riscv32-esp-elf-gcc",
-            "compileCommands": "${config:idf.buildPath}/compile_commands.json",
+            "compileCommands": ["${config:idf.buildPath}/compile_commands.json"],
             "includePath": [
                 "${config:idf.espIdfPath}/components/**",
                 "${config:idf.espIdfPathWin}/components/**",
                 "${workspaceFolder}/**",
                 "${workspaceFolder}/components/**",
                 "${workspaceFolder}/components/bi_firebase/**",
-                "${workspaceFolder}/components/bi_wifi/**"
+                "${workspaceFolder}/components/bi_wifi/**",
+                "${workspaceFolder}/components/bi_debug/include/**",
+                "${workspaceFolder}/components/bi_debug/**",
+                "${workspaceFolder}/components/bi_params/**"
             ],
             "browse": {
                 "path": [
@@ -20,7 +23,9 @@
                     "${workspaceFolder}/components",
                     "${workspaceFolder}/components/bi_firebase",
                     "${workspaceFolder}/components/bi_firebase/include",
-                    "${workspaceFolder}/components/bi_wifi/include"
+                    "${workspaceFolder}/components/bi_wifi/include",
+                    "${workspaceFolder}/components/bi_debug/include",
+                    "${workspaceFolder}/components/bi_params/include"
                 ],
                 "limitSymbolsToIncludedHeaders": true
             }

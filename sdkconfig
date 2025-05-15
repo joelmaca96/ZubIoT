@@ -1859,6 +1859,17 @@ CONFIG_WIFI_PROV_STA_FAST_SCAN=y
 # end of Wi-Fi Provisioning Manager
 
 #
+# Bihar debug module
+#
+
+#
+# BI_DEBUG
+#
+CONFIG_BI_DEBUG_DISABLE=0
+# end of BI_DEBUG
+# end of Bihar debug module
+
+#
 # Bihar Firebase module
 #
 

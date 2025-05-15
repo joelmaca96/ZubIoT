@@ -3,10 +3,17 @@
 #include "freertos/FreeRTOS.h"
 #include "bi_params.hpp"
 #include "Firebase/firebase_controller.h"
-BIParams biParams;
+#include "custom_config.h"
+#include "bi_debug.h"
 
+BIParams biParams;
+LoggerPtr g_mainLogger;
 extern "C" void app_main(void)
 {
+    g_mainLogger = createLogger("MAIN", INFO, DEBUG_MAIN);
+
+    BI_DEBUG_INFO(g_mainLogger, "Inicializacion del sistema");
+
     // Inicializa parametros
     biParams.init();
     biParams.incrementCounter("bootCount");
