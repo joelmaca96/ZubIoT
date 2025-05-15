@@ -13,3 +13,6 @@
 [submodule "components/bi_params"]
 	path = components/bi_params
 	url = git@gitlab.com:bihar4/tools-and-libs/bi_params.git
+[submodule "components/bi_debug"]
+	path = components/bi_debug
+	url = https://gitlab.com/bihar4/tools-and-libs/bi_debug.git
