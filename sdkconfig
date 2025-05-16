@@ -1879,26 +1879,6 @@ CONFIG_BI_DEBUG_DISABLE=0
 CONFIG_FIREBASE_TOKEN_REFRESH_TIME_MS=3000000
 # end of FIREBASE
 # end of Bihar Firebase module
-
-#
-# Bihar params module
-#
-
-#
-# BI_PARAMS
-#
-# end of BI_PARAMS
-# end of Bihar params module
-
-#
-# Bihar Wifi module
-#
-
-#
-# BI_WIFI
-#
-# end of BI_WIFI
-# end of Bihar Wifi module
 # end of Component config
 
 # CONFIG_IDF_EXPERIMENTAL_FEATURES is not set
