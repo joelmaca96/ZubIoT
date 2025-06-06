@@ -5,6 +5,11 @@
 #include <vector>
 #include <cstdint>
 
+// Constantes para número de celdas (importadas desde bi_params.hpp)
+#define MIN_CELL_COUNT 1
+#define DEFAULT_CELL_COUNT 8
+#define MAX_CELL_COUNT 18
+
 /**
  * @brief Clase que representa una celda individual de la batería
  */
@@ -88,9 +93,22 @@ private:
 public:
     /**
      * @brief Constructor del pack de baterías
-     * @param cellCount Número de celdas en el pack
      */
-    Pack(uint16_t cellCount = 4);
+    Pack();
+
+    /**
+     * @brief Inicializa el pack con un número específico de celdas
+     * @param cellCount Número de celdas en el pack (1-18)
+     * @return true si la inicialización fue exitosa
+     */
+    bool init(uint16_t cellCount);
+
+    /**
+     * @brief Reconfigura el pack para un nuevo número de celdas
+     * @param newCellCount Nuevo número de celdas (1-18)
+     * @return true si la reconfiguración fue exitosa
+     */
+    bool reconfigure(uint16_t newCellCount);
 
     /**
      * @brief Actualiza el estado del pack y todas sus celdas
@@ -102,6 +120,12 @@ public:
      * @return Vector de celdas
      */
     const std::vector<Cell>& getCells() const { return m_cells; }
+
+    /**
+     * @brief Obtiene el número de celdas configuradas
+     * @return Número de celdas
+     */
+    uint16_t getCellCount() const { return m_cellCount; }
 
     /**
      * @brief Obtiene el voltaje total del pack
@@ -167,10 +191,17 @@ public:
 
     /**
      * @brief Inicializa el controlador de batería
-     * @param cellCount Número de celdas en el pack
+     * Obtiene el número de celdas desde la configuración de parámetros
      * @return true si la inicialización fue exitosa
      */
-    bool init(uint16_t cellCount = 4);
+    bool init();
+
+    /**
+     * @brief Reconfigura el número de celdas en tiempo de ejecución
+     * @param newCellCount Nuevo número de celdas (1-18)
+     * @return true si la reconfiguración fue exitosa
+     */
+    bool reconfigureCells(uint16_t newCellCount);
 
     /**
      * @brief Actualiza el estado de la batería
@@ -184,12 +215,16 @@ public:
     const Pack& getPack() const { return m_pack; }
 
     /**
+     * @brief Verifica si el controlador está inicializado
+     * @return true si está inicializado
+     */
+    bool isInitialized() const { return m_initialized; }
+
+    /**
      * @brief Tarea FreeRTOS para el controlador de batería
      * @param pvParameters Parámetros (no usado)
      */
     static void batteryTask(void* pvParameters);
-
-
 };
 
 // Función de inicialización global para el controlador

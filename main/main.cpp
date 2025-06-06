@@ -14,7 +14,7 @@ extern "C" void app_main(void)
 {
     g_mainLogger = createLogger("MAIN", INFO, DEBUG_MAIN);
 
-    BI_DEBUG_INFO(g_mainLogger, "Inicializacion del sistema");
+    BI_DEBUG_INFO(g_mainLogger, "Sistema de gestión de baterías Bihar iniciando...");
 
     // Inicializa parametros y actualiza contadores arranque
     biParams.init();
@@ -23,7 +23,7 @@ extern "C" void app_main(void)
     biParams.printState();
     biParams.resetState();
 
-    // Inicializa controlador de bateria
+    // Inicializa controlador de bateria (usa configuración de celdas automáticamente)
     battery_controller_init();
 
     // Inicializa WiFi
@@ -32,13 +32,12 @@ extern "C" void app_main(void)
     // Inicializa firebase
     firebase_controller_init();
 
+    BI_DEBUG_INFO(g_mainLogger, "Sistema Bihar inicializado correctamente");
+    BI_DEBUG_INFO(g_mainLogger, "Monitoreo de %d celdas activo", biParams.getCellCount());
+
     while (1) {
         // Agrega tu código principal aqui
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(10000)); // 10 segundos
         
-        //biParams.printParams();
-        //biParams.printCounters();
-        //biParams.printState();
-
     }
 }

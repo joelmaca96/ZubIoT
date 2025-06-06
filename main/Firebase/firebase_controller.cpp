@@ -24,7 +24,7 @@ static bool update_command_status(const char* comando_id, const char* status, co
 static cJSON* create_firebase_server_timestamp();
 
 void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *value) {
-    BI_DEBUG_INFO(g_FirebaseLogger, "Evento de escucha firebase recibido: %d, data: %i", event_id, (uint32_t)(data));
+    BI_DEBUG_INFO(g_FirebaseLogger, "Firebase listener event received: %d, data: %i", event_id, (uint32_t)(data));
     
     DeviceParams& params = biParams.getParams();
     DeviceState& state = biParams.getState();
@@ -43,7 +43,7 @@ void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *v
                         strncpy(params.deviceName, name->valuestring, sizeof(params.deviceName) - 1);
                         params.deviceName[sizeof(params.deviceName) - 1] = '\0';
                         config_changed = true;
-                        BI_DEBUG_INFO(g_FirebaseLogger, "Nombre dispositivo actualizado: %s", params.deviceName);
+                        BI_DEBUG_INFO(g_FirebaseLogger, "Device name updated: %s", params.deviceName);
                     }
                     
                     // Actualizar modelo del dispositivo
@@ -52,7 +52,20 @@ void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *v
                         strncpy(params.deviceModel, model->valuestring, sizeof(params.deviceModel) - 1);
                         params.deviceModel[sizeof(params.deviceModel) - 1] = '\0';
                         config_changed = true;
-                        BI_DEBUG_INFO(g_FirebaseLogger, "Modelo dispositivo actualizado: %s", params.deviceModel);
+                        BI_DEBUG_INFO(g_FirebaseLogger, "Device model updated: %s", params.deviceModel);
+                    }
+                    
+                    // Actualizar número de celdas desde configuración
+                    cJSON *cellCount = cJSON_GetObjectItem(json, "cellCount");
+                    if (cellCount && cJSON_IsNumber(cellCount)) {
+                        uint8_t newCellCount = (uint8_t)cellCount->valueint;
+                        if (biParams.setCellCount(newCellCount)) {
+                            config_changed = true;
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Cell count configuration updated: %d", newCellCount);
+                        } else {
+                            BI_DEBUG_WARNING(g_FirebaseLogger, "Invalid cell count in configuration: %d (valid range: %d-%d)", 
+                                           newCellCount, MIN_CELL_COUNT, MAX_CELL_COUNT);
+                        }
                     }
                     
                     // Actualizar intervalo de muestreo (reporting.interval)
@@ -64,7 +77,7 @@ void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *v
                             params.sampleInterval = interval->valueint / 1000;
                             if (params.sampleInterval < 1) params.sampleInterval = 1; // Mínimo 1 segundo
                             config_changed = true;
-                            BI_DEBUG_INFO(g_FirebaseLogger, "Intervalo de muestreo actualizado: %d segundos", params.sampleInterval);
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Sample interval updated: %d seconds", params.sampleInterval);
                         }
                     }
                     
@@ -75,21 +88,21 @@ void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *v
                         if (autoShutdown && cJSON_IsBool(autoShutdown)) {
                             params.deepSleepEnabled = cJSON_IsTrue(autoShutdown);
                             config_changed = true;
-                            BI_DEBUG_INFO(g_FirebaseLogger, "Auto shutdown %s", params.deepSleepEnabled ? "activado" : "desactivado");
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Auto shutdown %s", params.deepSleepEnabled ? "enabled" : "disabled");
                         }
                         
                         cJSON *shutdownVoltage = cJSON_GetObjectItem(power, "shutdownVoltage");
                         if (shutdownVoltage && cJSON_IsNumber(shutdownVoltage)) {
                             params.shutdownVoltage = (float)shutdownVoltage->valuedouble;
                             config_changed = true;
-                            BI_DEBUG_INFO(g_FirebaseLogger, "Voltaje de apagado actualizado: %.2fV", params.shutdownVoltage);
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Shutdown voltage updated: %.2fV", params.shutdownVoltage);
                         }
                         
                         cJSON *maxCurrent = cJSON_GetObjectItem(power, "maxCurrent");
                         if (maxCurrent && cJSON_IsNumber(maxCurrent)) {
                             params.maxCurrent = (float)maxCurrent->valuedouble;
                             config_changed = true;
-                            BI_DEBUG_INFO(g_FirebaseLogger, "Corriente máxima actualizada: %.2fA", params.maxCurrent);
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Max current updated: %.2fA", params.maxCurrent);
                         }
                     }
                     
@@ -100,28 +113,28 @@ void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *v
                         if (highTemp && cJSON_IsNumber(highTemp)) {
                             params.alertHighTemp = (float)highTemp->valuedouble;
                             config_changed = true;
-                            BI_DEBUG_INFO(g_FirebaseLogger, "Alerta temperatura alta: %.1f°C", params.alertHighTemp);
+                            BI_DEBUG_INFO(g_FirebaseLogger, "High temp alert: %.1f°C", params.alertHighTemp);
                         }
                         
                         cJSON *lowTemp = cJSON_GetObjectItem(alerts, "lowTemp");
                         if (lowTemp && cJSON_IsNumber(lowTemp)) {
                             params.alertLowTemp = (float)lowTemp->valuedouble;
                             config_changed = true;
-                            BI_DEBUG_INFO(g_FirebaseLogger, "Alerta temperatura baja: %.1f°C", params.alertLowTemp);
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Low temp alert: %.1f°C", params.alertLowTemp);
                         }
                         
                         cJSON *highVoltage = cJSON_GetObjectItem(alerts, "highVoltage");
                         if (highVoltage && cJSON_IsNumber(highVoltage)) {
                             params.alertHighVoltage = (float)highVoltage->valuedouble;
                             config_changed = true;
-                            BI_DEBUG_INFO(g_FirebaseLogger, "Alerta voltaje alto: %.2fV", params.alertHighVoltage);
+                            BI_DEBUG_INFO(g_FirebaseLogger, "High voltage alert: %.2fV", params.alertHighVoltage);
                         }
                         
                         cJSON *lowVoltage = cJSON_GetObjectItem(alerts, "lowVoltage");
                         if (lowVoltage && cJSON_IsNumber(lowVoltage)) {
                             params.alertLowVoltage = (float)lowVoltage->valuedouble;
                             config_changed = true;
-                            BI_DEBUG_INFO(g_FirebaseLogger, "Alerta voltaje bajo: %.2fV", params.alertLowVoltage);
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Low voltage alert: %.2fV", params.alertLowVoltage);
                         }
                     }
                     
@@ -132,26 +145,33 @@ void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *v
                         if (enabled && cJSON_IsBool(enabled)) {
                             params.balancingEnabled = cJSON_IsTrue(enabled);
                             config_changed = true;
-                            BI_DEBUG_INFO(g_FirebaseLogger, "Balanceo %s", params.balancingEnabled ? "activado" : "desactivado");
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Balancing %s", params.balancingEnabled ? "enabled" : "disabled");
                         }
                         
                         cJSON *threshold = cJSON_GetObjectItem(balancing, "threshold");
                         if (threshold && cJSON_IsNumber(threshold)) {
                             params.balancingThreshold = (float)threshold->valuedouble;
                             config_changed = true;
-                            BI_DEBUG_INFO(g_FirebaseLogger, "Umbral de balanceo: %.3fV", params.balancingThreshold);
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Balancing threshold: %.3fV", params.balancingThreshold);
                         }
                     }
                     
                     // Guardar cambios si hubo alguno
                     if (config_changed) {
                         biParams.saveParams();
-                        BI_DEBUG_INFO(g_FirebaseLogger, "Configuración guardada en NVS");
+                        BI_DEBUG_INFO(g_FirebaseLogger, "Configuration saved to NVS");
+                        
+                        // Log especial si cambió el número de celdas
+                        cJSON *cellCountCheck = cJSON_GetObjectItem(json, "cellCount");
+                        if (cellCountCheck && cJSON_IsNumber(cellCountCheck)) {
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Battery pack will be reconfigured to %d cells on next cycle", 
+                                         params.cellCount);
+                        }
                     }
                     
                     cJSON_Delete(json);
                 } else {
-                    BI_DEBUG_ERROR(g_FirebaseLogger, "Error parseando JSON de configuración");
+                    BI_DEBUG_ERROR(g_FirebaseLogger, "Error parsing configuration JSON");
                 }
             }
             break;
@@ -178,7 +198,7 @@ void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *v
                                 // Obtener el ID del comando (clave del objeto)
                                 const char* comando_id = comando->string;
                                 if (comando_id) {
-                                    BI_DEBUG_INFO(g_FirebaseLogger, "Procesando comando ID: %s", comando_id);
+                                    BI_DEBUG_INFO(g_FirebaseLogger, "Processing command ID: %s", comando_id);
                                     
                                     // Marcar como recibido inmediatamente
                                     update_command_status(comando_id, "received");
@@ -200,11 +220,11 @@ void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *v
     }
 }
 
-// Función auxiliar para procesar comandos
+// Función auxiliar para procesar comandos - ACTUALIZADA
 static void procesarComando(const char* tipo, cJSON* valor, const char* comando_id) {
     if (!tipo || !valor || !comando_id) return;
     
-    BI_DEBUG_INFO(g_FirebaseLogger, "Procesando comando: %s (ID: %s)", tipo, comando_id);
+    BI_DEBUG_INFO(g_FirebaseLogger, "Processing command: %s (ID: %s)", tipo, comando_id);
     
     bool comando_exitoso = false;
     char resultado[128] = {0};
@@ -212,45 +232,42 @@ static void procesarComando(const char* tipo, cJSON* valor, const char* comando_
     if (strcmp(tipo, "power") == 0 && cJSON_IsString(valor)) {
         if (strcmp(valor->valuestring, "on") == 0) {
             // Código para encender
-            BI_DEBUG_INFO(g_FirebaseLogger, "Comando: Encender sistema");
+            BI_DEBUG_INFO(g_FirebaseLogger, "Command: Power ON");
             comando_exitoso = true;
-            strcpy(resultado, "Sistema encendido correctamente");
+            strcpy(resultado, "System powered on successfully");
         } else if (strcmp(valor->valuestring, "off") == 0) {
             // Código para apagar
-            BI_DEBUG_INFO(g_FirebaseLogger, "Comando: Apagar sistema");
+            BI_DEBUG_INFO(g_FirebaseLogger, "Command: Power OFF");
             comando_exitoso = true;
-            strcpy(resultado, "Sistema apagado correctamente");
+            strcpy(resultado, "System powered off successfully");
+        } else if (strcmp(valor->valuestring, "restart") == 0) {
+            BI_DEBUG_INFO(g_FirebaseLogger, "Command: Reboot system");
+            update_command_status(comando_id, "completed", "System rebooting...");
+            
+            // Esperar un poco para que se envíe la respuesta antes del reinicio
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            esp_restart(); 
         } else {
-            strcpy(resultado, "Valor de power inválido");
+            strcpy(resultado, "Invalid power value");
         }
     } 
     else if (strcmp(tipo, "balancing") == 0 && cJSON_IsString(valor)) {
         if (strcmp(valor->valuestring, "start") == 0) {
             // Iniciar balanceo
-            BI_DEBUG_INFO(g_FirebaseLogger, "Comando: Iniciar balanceo");
+            BI_DEBUG_INFO(g_FirebaseLogger, "Command: Start balancing");
             comando_exitoso = true;
-            strcpy(resultado, "Balanceo iniciado correctamente");
+            strcpy(resultado, "Balancing started successfully");
         } else if (strcmp(valor->valuestring, "stop") == 0) {
             // Detener balanceo
-            BI_DEBUG_INFO(g_FirebaseLogger, "Comando: Detener balanceo");
+            BI_DEBUG_INFO(g_FirebaseLogger, "Command: Stop balancing");
             comando_exitoso = true;
-            strcpy(resultado, "Balanceo detenido correctamente");
+            strcpy(resultado, "Balancing stopped successfully");
         } else {
-            strcpy(resultado, "Valor de balancing inválido");
+            strcpy(resultado, "Invalid balancing value");
         }
     }
-    else if (strcmp(tipo, "reboot") == 0) {
-        // Reiniciar dispositivo
-        BI_DEBUG_INFO(g_FirebaseLogger, "Comando: Reiniciar sistema");
-        update_command_status(comando_id, "completed", "Sistema reiniciándose...");
-        
-        // Esperar un poco para que se envíe la respuesta antes del reinicio
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        esp_restart(); 
-        return; // No llegará aquí, pero por claridad
-    }
     else {
-        snprintf(resultado, sizeof(resultado), "Comando desconocido: %s", tipo);
+        snprintf(resultado, sizeof(resultado), "Unknown command: %s", tipo);
     }
     
     // Actualizar estado del comando

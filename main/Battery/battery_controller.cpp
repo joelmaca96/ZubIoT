@@ -60,22 +60,40 @@ void Cell::update() {
     m_soc = static_cast<uint8_t>(std::max(0.0f, std::min(100.0f, socPercentage)));
     
     // El SOH disminuye muy lentamente con el tiempo (simulación)
-    if (rand() % 100 == 0 && m_soh > 80) {
+    if (rand() % 1000 == 0 && m_soh > 80) {
         m_soh -= 1;
     }
 }
 
-// Constructor de Pack
-Pack::Pack(uint16_t cellCount) : m_uptime(0), m_cellCount(cellCount) {
-    // Crear las celdas
+// Constructor de Pack - Actualizado para usar configuración
+Pack::Pack() : m_uptime(0), m_cellCount(0) {
+    // Constructor vacío - se inicializará con init()
+}
+
+bool Pack::init(uint16_t cellCount) {
+    if (cellCount == 0) {
+        BI_DEBUG_ERROR(g_BatteryLogger, "Invalid cell count: %d", cellCount);
+        return false;
+    }
+    
+    // Limpiar celdas existentes si las hay
+    m_cells.clear();
+    
+    m_cellCount = cellCount;
+    
+    // Crear las celdas - CORREGIDO: usar push_back con constructor
     m_cells.reserve(cellCount);
     for (uint16_t i = 0; i < cellCount; ++i) {
-        m_cells.emplace_back(i + 1);  // IDs comienzan en 1
+        m_cells.push_back(Cell(i + 1));  // Crear Cell con ID específico
     }
     
     // Inicializar otros valores
     m_status = PackStatus::IDLE;
+    m_uptime = 0;
     update();  // Esto actualizará los valores derivados
+    
+    BI_DEBUG_INFO(g_BatteryLogger, "Pack initialized with %d cells", cellCount);
+    return true;
 }
 
 void Pack::update() {
@@ -91,8 +109,8 @@ void Pack::update() {
     }
     
     // Simular corriente basada en el estado
-    // 10% de probabilidad de cambiar de estado
-    if (rand() % 10 == 0) {
+    // 5% de probabilidad de cambiar de estado (menos frecuente)
+    if (rand() % 20 == 0) {
         int newState = rand() % 5;
         m_status = static_cast<PackStatus>(newState);
     }
@@ -123,6 +141,39 @@ void Pack::update() {
     m_uptime += 1;
 }
 
+bool Pack::reconfigure(uint16_t newCellCount) {
+    if (newCellCount == 0) {
+        BI_DEBUG_ERROR(g_BatteryLogger, "Invalid new cell count: %d", newCellCount);
+        return false;
+    }
+    
+    if (newCellCount == m_cellCount) {
+        BI_DEBUG_INFO(g_BatteryLogger, "Cell count unchanged: %d", newCellCount);
+        return true;
+    }
+    
+    BI_DEBUG_INFO(g_BatteryLogger, "Reconfiguring pack from %d to %d cells", m_cellCount, newCellCount);
+    
+    if (newCellCount > m_cellCount) {
+        // Añadir nuevas celdas
+        m_cells.reserve(newCellCount);
+        for (uint16_t i = m_cellCount; i < newCellCount; ++i) {
+            m_cells.push_back(Cell(i + 1));
+        }
+    } else if (newCellCount < m_cellCount) {
+        // Remover celdas excedentes
+        m_cells.erase(m_cells.begin() + newCellCount, m_cells.end());
+    }
+    
+    m_cellCount = newCellCount;
+    
+    // Actualizar para recalcular valores
+    update();
+    
+    BI_DEBUG_INFO(g_BatteryLogger, "Pack reconfigured successfully to %d cells", newCellCount);
+    return true;
+}
+
 const char* Pack::getStatusString() const {
     switch (m_status) {
         case PackStatus::IDLE: return "Idle";
@@ -137,7 +188,7 @@ const char* Pack::getStatusString() const {
 // Implementación de BatteryController
 BatteryController::BatteryController() : m_initialized(false) {}
 
-bool BatteryController::init(uint16_t cellCount) {
+bool BatteryController::init() {
     if (m_initialized) {
         return true;  // Ya inicializado
     }
@@ -145,12 +196,37 @@ bool BatteryController::init(uint16_t cellCount) {
     // Sembrar el generador de números aleatorios
     srand(static_cast<unsigned int>(time(nullptr)));
     
+    // Obtener número de celdas desde configuración
+    uint16_t cellCount = DEFAULT_CELL_COUNT;
+    if (biParams.isInitialized()) {
+        cellCount = biParams.getCellCount();
+    }
+    
     // Inicializar el pack con el número de celdas especificado
-    m_pack = Pack(cellCount);
+    if (!m_pack.init(cellCount)) {
+        BI_DEBUG_ERROR(g_BatteryLogger, "Failed to initialize pack with %d cells", cellCount);
+        return false;
+    }
+    
     m_initialized = true;
     
     BI_DEBUG_INFO(g_BatteryLogger, "Battery controller initialized with %d cells", cellCount);
     return true;
+}
+
+bool BatteryController::reconfigureCells(uint16_t newCellCount) {
+    if (!m_initialized) {
+        BI_DEBUG_ERROR(g_BatteryLogger, "Cannot reconfigure: controller not initialized");
+        return false;
+    }
+    
+    if (newCellCount < MIN_CELL_COUNT || newCellCount > MAX_CELL_COUNT) {
+        BI_DEBUG_ERROR(g_BatteryLogger, "Invalid cell count %d. Must be between %d and %d", 
+                      newCellCount, MIN_CELL_COUNT, MAX_CELL_COUNT);
+        return false;
+    }
+    
+    return m_pack.reconfigure(newCellCount);
 }
 
 void BatteryController::update() {
@@ -161,9 +237,14 @@ void BatteryController::update() {
     // Actualizar el pack
     m_pack.update();
     
-    // Log de algunos valores
-    BI_DEBUG_INFO(g_BatteryLogger, "Battery status: %s, Voltage: %.2fV, Current: %.2fA, Power: %.2fW",
-                 m_pack.getStatusString(), m_pack.getTotalVoltage(), m_pack.getCurrent(), m_pack.getPower());
+    // Log de algunos valores (solo cada 10 actualizaciones para reducir spam)
+    static int update_counter = 0;
+    if (++update_counter >= 10) {
+        BI_DEBUG_VERBOSE(g_BatteryLogger, "Battery status: %s, Voltage: %.2fV, Current: %.2fA, Power: %.2fW, Cells: %d",
+                        m_pack.getStatusString(), m_pack.getTotalVoltage(), m_pack.getCurrent(), 
+                        m_pack.getPower(), m_pack.getCellCount());
+        update_counter = 0;
+    }
 }
 
 void BatteryController::batteryTask(void* pvParameters) {
@@ -173,6 +254,7 @@ void BatteryController::batteryTask(void* pvParameters) {
     static uint32_t lastStoreTime = 0;
     static uint32_t lastHistoryTime = 0;
     static uint32_t lastConfigCheck = 0;
+    static uint8_t lastCellCount = 0;
     
     // Variables para intervalos configurables (en ms)
     static uint32_t currentStoreInterval = 5000;    // Por defecto 5 segundos
@@ -188,6 +270,25 @@ void BatteryController::batteryTask(void* pvParameters) {
         if ((currentTime - lastConfigCheck) >= pdMS_TO_TICKS(10000)) {
             if (biParams.isInitialized()) {
                 DeviceParams& params = biParams.getParams();
+                
+                // Verificar si cambió el número de celdas
+                if (lastCellCount == 0) {
+                    // Primera inicialización
+                    lastCellCount = params.cellCount;
+                } else if (lastCellCount != params.cellCount) {
+                    BI_DEBUG_INFO(g_BatteryLogger, "Cell count configuration changed from %d to %d", 
+                                 lastCellCount, params.cellCount);
+                    
+                    if (g_batteryController.reconfigureCells(params.cellCount)) {
+                        lastCellCount = params.cellCount;
+                        BI_DEBUG_INFO(g_BatteryLogger, "Successfully reconfigured to %d cells", params.cellCount);
+                    } else {
+                        BI_DEBUG_ERROR(g_BatteryLogger, "Failed to reconfigure cells, reverting to %d", lastCellCount);
+                        // Revertir parámetro si falla la reconfiguración
+                        biParams.setCellCount(lastCellCount);
+                    }
+                }
+                
                 // Convertir de segundos a milisegundos
                 currentStoreInterval = params.sampleInterval * 1000;
                 
@@ -200,8 +301,8 @@ void BatteryController::batteryTask(void* pvParameters) {
                     currentStoreInterval = 1000; // Mínimo 1 segundo
                 }
                 
-                BI_DEBUG_INFO(g_BatteryLogger, "Intervalos actualizados: Store=%lums, History=%lums", 
-                             currentStoreInterval, currentHistoryInterval);
+                BI_DEBUG_VERBOSE(g_BatteryLogger, "Config: Cells=%d, Store=%lums, History=%lums", 
+                                params.cellCount, currentStoreInterval, currentHistoryInterval);
             }
             lastConfigCheck = currentTime;
         }
@@ -214,46 +315,48 @@ void BatteryController::batteryTask(void* pvParameters) {
             const Pack& pack = g_batteryController.getPack();
             const std::vector<Cell>& cells = pack.getCells();
             
-            // Crear un array con los datos de las celdas
-            battery_cell_t* cellData = new battery_cell_t[cells.size()];
-            
-            for (size_t i = 0; i < cells.size(); ++i) {
-                cellData[i].voltage = cells[i].getVoltage();
-                cellData[i].temperature = cells[i].getTemperature();
-                cellData[i].soc = cells[i].getSOC();
-                cellData[i].soh = cells[i].getSOH();
-            }
-            
-            // Actualizar Firebase con los datos de las celdas
-            if (update_battery_cells(cellData, cells.size())) {
-                BI_DEBUG_INFO(g_BatteryLogger, "Datos de celdas actualizados en Firebase");
-            }
-            
-            // Actualizar también los datos del pack
-            if (update_battery_pack(pack.getTotalVoltage(), pack.getCurrent(), 
-                                  pack.getPower(), pack.getStatusString(), pack.getUptime())) {
-                BI_DEBUG_INFO(g_BatteryLogger, "Datos del pack actualizados en Firebase");
-            }
-            
-            // Verificar si es momento de almacenar histórico
-            if ((currentTime - lastHistoryTime) >= pdMS_TO_TICKS(currentHistoryInterval)) {
-                if (store_battery_history(cellData, cells.size(), pack.getTotalVoltage(), 
-                                        pack.getCurrent(), pack.getPower(), pack.getStatusString())) {
-                    BI_DEBUG_INFO(g_BatteryLogger, "Registro histórico almacenado");
-                    lastHistoryTime = currentTime;
-                } else {
-                    BI_DEBUG_WARNING(g_BatteryLogger, "Error al almacenar registro histórico");
+            if (!cells.empty()) {
+                // Crear un array con los datos de las celdas
+                battery_cell_t* cellData = new battery_cell_t[cells.size()];
+                
+                for (size_t i = 0; i < cells.size(); ++i) {
+                    cellData[i].voltage = cells[i].getVoltage();
+                    cellData[i].temperature = cells[i].getTemperature();
+                    cellData[i].soc = cells[i].getSOC();
+                    cellData[i].soh = cells[i].getSOH();
                 }
+                
+                // Actualizar Firebase con los datos de las celdas
+                if (update_battery_cells(cellData, cells.size())) {
+                    BI_DEBUG_VERBOSE(g_BatteryLogger, "Cell data updated in Firebase (%zu cells)", cells.size());
+                }
+                
+                // Actualizar también los datos del pack
+                if (update_battery_pack(pack.getTotalVoltage(), pack.getCurrent(), 
+                                      pack.getPower(), pack.getStatusString(), pack.getUptime())) {
+                    BI_DEBUG_VERBOSE(g_BatteryLogger, "Pack data updated in Firebase");
+                }
+                
+                // Verificar si es momento de almacenar histórico
+                if ((currentTime - lastHistoryTime) >= pdMS_TO_TICKS(currentHistoryInterval)) {
+                    if (store_battery_history(cellData, cells.size(), pack.getTotalVoltage(), 
+                                            pack.getCurrent(), pack.getPower(), pack.getStatusString())) {
+                        BI_DEBUG_INFO(g_BatteryLogger, "Historical record stored (%zu cells)", cells.size());
+                        lastHistoryTime = currentTime;
+                    } else {
+                        BI_DEBUG_WARNING(g_BatteryLogger, "Failed to store historical record");
+                    }
+                }
+                
+                // Liberar memoria
+                delete[] cellData;
+                
+                // Incrementar contador de puntos de datos
+                biParams.incrementCounter("dataPoints", 1, false);
             }
-            
-            // Liberar memoria
-            delete[] cellData;
             
             // Actualizar la marca de tiempo
             lastStoreTime = currentTime;
-            
-            // Incrementar contador de puntos de datos
-            biParams.incrementCounter("dataPoints", 1, false);
         }
         
         // Verificar alertas de temperatura y voltaje
@@ -292,7 +395,7 @@ void BatteryController::checkBatteryAlerts() {
         // Alerta de temperatura alta
         if (cell.getTemperature() > params.alertHighTemp) {
             snprintf(alertMessage, sizeof(alertMessage), 
-                    "Temperatura alta en celda %d: %.1f°C (límite: %.1f°C)", 
+                    "High temp cell %d: %.1f°C (limit: %.1f°C)", 
                     (int)(i + 1), cell.getTemperature(), params.alertHighTemp);
             BI_DEBUG_WARNING(g_BatteryLogger, "%s", alertMessage);
             biParams.updateStateValue("lastError", alertMessage, strlen(alertMessage), true);
@@ -302,7 +405,7 @@ void BatteryController::checkBatteryAlerts() {
         // Alerta de temperatura baja
         if (cell.getTemperature() < params.alertLowTemp) {
             snprintf(alertMessage, sizeof(alertMessage), 
-                    "Temperatura baja en celda %d: %.1f°C (límite: %.1f°C)", 
+                    "Low temp cell %d: %.1f°C (limit: %.1f°C)", 
                     (int)(i + 1), cell.getTemperature(), params.alertLowTemp);
             BI_DEBUG_WARNING(g_BatteryLogger, "%s", alertMessage);
             biParams.updateStateValue("lastError", alertMessage, strlen(alertMessage), true);
@@ -312,7 +415,7 @@ void BatteryController::checkBatteryAlerts() {
         // Alerta de voltaje alto
         if (cell.getVoltage() > params.alertHighVoltage) {
             snprintf(alertMessage, sizeof(alertMessage), 
-                    "Voltaje alto en celda %d: %.2fV (límite: %.2fV)", 
+                    "High voltage cell %d: %.2fV (limit: %.2fV)", 
                     (int)(i + 1), cell.getVoltage(), params.alertHighVoltage);
             BI_DEBUG_WARNING(g_BatteryLogger, "%s", alertMessage);
             biParams.updateStateValue("lastError", alertMessage, strlen(alertMessage), true);
@@ -322,7 +425,7 @@ void BatteryController::checkBatteryAlerts() {
         // Alerta de voltaje bajo
         if (cell.getVoltage() < params.alertLowVoltage) {
             snprintf(alertMessage, sizeof(alertMessage), 
-                    "Voltaje bajo en celda %d: %.2fV (límite: %.2fV)", 
+                    "Low voltage cell %d: %.2fV (limit: %.2fV)", 
                     (int)(i + 1), cell.getVoltage(), params.alertLowVoltage);
             BI_DEBUG_WARNING(g_BatteryLogger, "%s", alertMessage);
             biParams.updateStateValue("lastError", alertMessage, strlen(alertMessage), true);
@@ -333,7 +436,7 @@ void BatteryController::checkBatteryAlerts() {
     // Verificar límite de corriente
     if (fabs(pack.getCurrent()) > params.maxCurrent) {
         snprintf(alertMessage, sizeof(alertMessage), 
-                "Corriente excesiva: %.2fA (límite: %.2fA)", 
+                "Excessive current: %.2fA (limit: %.2fA)", 
                 pack.getCurrent(), params.maxCurrent);
         BI_DEBUG_WARNING(g_BatteryLogger, "%s", alertMessage);
         biParams.updateStateValue("lastError", alertMessage, strlen(alertMessage), true);
@@ -343,7 +446,7 @@ void BatteryController::checkBatteryAlerts() {
     // Verificar voltaje de apagado
     if (pack.getTotalVoltage() < (params.shutdownVoltage * cells.size())) {
         snprintf(alertMessage, sizeof(alertMessage), 
-                "Voltaje crítico del pack: %.2fV (límite: %.2fV)", 
+                "Critical pack voltage: %.2fV (limit: %.2fV)", 
                 pack.getTotalVoltage(), params.shutdownVoltage * cells.size());
         BI_DEBUG_ERROR(g_BatteryLogger, "%s", alertMessage);
         biParams.updateStateValue("lastError", alertMessage, strlen(alertMessage), true);
@@ -351,7 +454,7 @@ void BatteryController::checkBatteryAlerts() {
         
         // Si está habilitado el auto-shutdown, apagar el sistema
         if (params.deepSleepEnabled) {
-            BI_DEBUG_ERROR(g_BatteryLogger, "Iniciando apagado automático por voltaje crítico");
+            BI_DEBUG_ERROR(g_BatteryLogger, "Initiating auto-shutdown for critical voltage");
             // Aquí se podría implementar el apagado real del sistema
         }
     }
@@ -389,8 +492,8 @@ bool BatteryController::shouldStartBalancing() {
     
     float voltageDifference = maxVoltage - minVoltage;
     
-    BI_DEBUG_INFO(g_BatteryLogger, "Diferencia de voltaje entre celdas: %.3fV (umbral: %.3fV)", 
-                 voltageDifference, params.balancingThreshold);
+    BI_DEBUG_VERBOSE(g_BatteryLogger, "Voltage difference: %.3fV (threshold: %.3fV)", 
+                    voltageDifference, params.balancingThreshold);
     
     return voltageDifference > params.balancingThreshold;
 }
@@ -402,8 +505,8 @@ void battery_controller_init() {
     
     BI_DEBUG_INFO(g_BatteryLogger, "Initializing battery controller");
     
-    // Inicializar el controlador con 4 celdas por defecto
-    if (g_batteryController.init(4)) {
+    // Inicializar el controlador
+    if (g_batteryController.init()) {
         // Crear la tarea de actualización de batería
         xTaskCreate(BatteryController::batteryTask, "battery_task", 4096 * 2, NULL, 5, NULL);
         BI_DEBUG_INFO(g_BatteryLogger, "Battery controller task created");
