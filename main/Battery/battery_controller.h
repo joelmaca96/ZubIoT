@@ -148,6 +148,17 @@ private:
     Pack m_pack;
     bool m_initialized;
 
+    /**
+     * @brief Verifica alertas de temperatura y voltaje según configuración
+     */
+    static void checkBatteryAlerts();
+    
+    /**
+     * @brief Determina si es necesario iniciar balanceo de celdas
+     * @return true si la diferencia de voltajes supera el umbral configurado
+     */
+    static bool shouldStartBalancing();
+
 public:
     /**
      * @brief Constructor del controlador
@@ -177,6 +188,8 @@ public:
      * @param pvParameters Parámetros (no usado)
      */
     static void batteryTask(void* pvParameters);
+
+
 };
 
 // Función de inicialización global para el controlador

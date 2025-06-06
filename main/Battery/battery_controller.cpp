@@ -9,7 +9,9 @@
 #include "freertos/task.h"
 #include "esp_timer.h"
 #include "../custom_config.h"
+#include "bi_params.hpp"
 
+extern BIParams biParams;
 // Logger para el controlador de batería
 static LoggerPtr g_BatteryLogger;
 
@@ -164,22 +166,50 @@ void BatteryController::update() {
                  m_pack.getStatusString(), m_pack.getTotalVoltage(), m_pack.getCurrent(), m_pack.getPower());
 }
 
-// Tarea FreeRTOS para el controlador de batería
 void BatteryController::batteryTask(void* pvParameters) {
     TickType_t lastWakeTime = xTaskGetTickCount();
-    const TickType_t interval = pdMS_TO_TICKS(5000);  // Actualizar cada 5 segundos
-
+    const TickType_t updateInterval = pdMS_TO_TICKS(1000);  // Actualizar controlador cada 1 segundo
+    
     static uint32_t lastStoreTime = 0;
-    const uint32_t storeInterval = pdMS_TO_TICKS(10000);  // 10 segundos
-
-    static uint32_t lastStoreTimeHour = 0;
-    const uint32_t storeIntervalHour = pdMS_TO_TICKS(3600000);  // 1 hora
-       
+    static uint32_t lastHistoryTime = 0;
+    static uint32_t lastConfigCheck = 0;
+    
+    // Variables para intervalos configurables (en ms)
+    static uint32_t currentStoreInterval = 5000;    // Por defecto 5 segundos
+    static uint32_t currentHistoryInterval = 3600000; // Por defecto 1 hora
+    
     while (true) {
-        // Actualizar el controlador
+        uint32_t currentTime = xTaskGetTickCount();
+        
+        // Actualizar el controlador cada segundo
         g_batteryController.update();
         
-        if ((xTaskGetTickCount() - lastStoreTime) >= storeInterval && check_firebase_connectivity()) {
+        // Verificar configuración cada 10 segundos para actualizaciones dinámicas
+        if ((currentTime - lastConfigCheck) >= pdMS_TO_TICKS(10000)) {
+            if (biParams.isInitialized()) {
+                DeviceParams& params = biParams.getParams();
+                // Convertir de segundos a milisegundos
+                currentStoreInterval = params.sampleInterval * 1000;
+                
+                // El intervalo de históricos puede ser configurable o fijo
+                // Por ahora mantenemos 1 hora, pero se podría añadir otro parámetro
+                currentHistoryInterval = 3600000; // 1 hora fija
+                
+                // Validar intervalos mínimos para evitar sobrecarga
+                if (currentStoreInterval < 1000) {
+                    currentStoreInterval = 1000; // Mínimo 1 segundo
+                }
+                
+                BI_DEBUG_INFO(g_BatteryLogger, "Intervalos actualizados: Store=%lums, History=%lums", 
+                             currentStoreInterval, currentHistoryInterval);
+            }
+            lastConfigCheck = currentTime;
+        }
+        
+        // Almacenar datos en tiempo real según configuración
+        if ((currentTime - lastStoreTime) >= pdMS_TO_TICKS(currentStoreInterval) && 
+            check_firebase_connectivity()) {
+            
             // Preparar datos para Firebase
             const Pack& pack = g_batteryController.getPack();
             const std::vector<Cell>& cells = pack.getCells();
@@ -195,26 +225,174 @@ void BatteryController::batteryTask(void* pvParameters) {
             }
             
             // Actualizar Firebase con los datos de las celdas
-            update_battery_cells(cellData, cells.size());
-                        
-            // Actualizar también los datos del pack
-            update_battery_pack(pack.getTotalVoltage(), pack.getCurrent(), pack.getPower(), pack.getStatusString(), pack.getUptime());
+            if (update_battery_cells(cellData, cells.size())) {
+                BI_DEBUG_INFO(g_BatteryLogger, "Datos de celdas actualizados en Firebase");
+            }
             
-            if ((xTaskGetTickCount() - lastStoreTimeHour) >= storeIntervalHour) {
-                store_battery_history(cellData, cells.size(), pack.getTotalVoltage(), pack.getCurrent(), pack.getPower(), pack.getStatusString());
-                lastStoreTimeHour = xTaskGetTickCount();
+            // Actualizar también los datos del pack
+            if (update_battery_pack(pack.getTotalVoltage(), pack.getCurrent(), 
+                                  pack.getPower(), pack.getStatusString(), pack.getUptime())) {
+                BI_DEBUG_INFO(g_BatteryLogger, "Datos del pack actualizados en Firebase");
+            }
+            
+            // Verificar si es momento de almacenar histórico
+            if ((currentTime - lastHistoryTime) >= pdMS_TO_TICKS(currentHistoryInterval)) {
+                if (store_battery_history(cellData, cells.size(), pack.getTotalVoltage(), 
+                                        pack.getCurrent(), pack.getPower(), pack.getStatusString())) {
+                    BI_DEBUG_INFO(g_BatteryLogger, "Registro histórico almacenado");
+                    lastHistoryTime = currentTime;
+                } else {
+                    BI_DEBUG_WARNING(g_BatteryLogger, "Error al almacenar registro histórico");
+                }
             }
             
             // Liberar memoria
             delete[] cellData;
             
             // Actualizar la marca de tiempo
-            lastStoreTime = xTaskGetTickCount();
+            lastStoreTime = currentTime;
+            
+            // Incrementar contador de puntos de datos
+            biParams.incrementCounter("dataPoints", 1, false);
         }
-       
-        // Esperar hasta el próximo intervalo
-        vTaskDelayUntil(&lastWakeTime, interval);
+        
+        // Verificar alertas de temperatura y voltaje
+        if (biParams.isInitialized()) {
+            checkBatteryAlerts();
+        }
+        
+        // Esperar hasta el próximo intervalo de actualización
+        vTaskDelayUntil(&lastWakeTime, updateInterval);
     }
+}
+
+// Nueva función para verificar alertas
+void BatteryController::checkBatteryAlerts() {
+    if (!biParams.isInitialized()) return;
+    
+    DeviceParams& params = biParams.getParams();
+    const Pack& pack = g_batteryController.getPack();
+    const std::vector<Cell>& cells = pack.getCells();
+    
+    static uint32_t lastAlertTime = 0;
+    uint32_t currentTime = xTaskGetTickCount();
+    
+    // Verificar alertas solo cada 30 segundos para evitar spam
+    if ((currentTime - lastAlertTime) < pdMS_TO_TICKS(30000)) {
+        return;
+    }
+    
+    bool alertTriggered = false;
+    char alertMessage[128];
+    
+    // Verificar alertas por celda
+    for (size_t i = 0; i < cells.size(); ++i) {
+        const Cell& cell = cells[i];
+        
+        // Alerta de temperatura alta
+        if (cell.getTemperature() > params.alertHighTemp) {
+            snprintf(alertMessage, sizeof(alertMessage), 
+                    "Temperatura alta en celda %d: %.1f°C (límite: %.1f°C)", 
+                    (int)(i + 1), cell.getTemperature(), params.alertHighTemp);
+            BI_DEBUG_WARNING(g_BatteryLogger, "%s", alertMessage);
+            biParams.updateStateValue("lastError", alertMessage, strlen(alertMessage), true);
+            alertTriggered = true;
+        }
+        
+        // Alerta de temperatura baja
+        if (cell.getTemperature() < params.alertLowTemp) {
+            snprintf(alertMessage, sizeof(alertMessage), 
+                    "Temperatura baja en celda %d: %.1f°C (límite: %.1f°C)", 
+                    (int)(i + 1), cell.getTemperature(), params.alertLowTemp);
+            BI_DEBUG_WARNING(g_BatteryLogger, "%s", alertMessage);
+            biParams.updateStateValue("lastError", alertMessage, strlen(alertMessage), true);
+            alertTriggered = true;
+        }
+        
+        // Alerta de voltaje alto
+        if (cell.getVoltage() > params.alertHighVoltage) {
+            snprintf(alertMessage, sizeof(alertMessage), 
+                    "Voltaje alto en celda %d: %.2fV (límite: %.2fV)", 
+                    (int)(i + 1), cell.getVoltage(), params.alertHighVoltage);
+            BI_DEBUG_WARNING(g_BatteryLogger, "%s", alertMessage);
+            biParams.updateStateValue("lastError", alertMessage, strlen(alertMessage), true);
+            alertTriggered = true;
+        }
+        
+        // Alerta de voltaje bajo
+        if (cell.getVoltage() < params.alertLowVoltage) {
+            snprintf(alertMessage, sizeof(alertMessage), 
+                    "Voltaje bajo en celda %d: %.2fV (límite: %.2fV)", 
+                    (int)(i + 1), cell.getVoltage(), params.alertLowVoltage);
+            BI_DEBUG_WARNING(g_BatteryLogger, "%s", alertMessage);
+            biParams.updateStateValue("lastError", alertMessage, strlen(alertMessage), true);
+            alertTriggered = true;
+        }
+    }
+    
+    // Verificar límite de corriente
+    if (fabs(pack.getCurrent()) > params.maxCurrent) {
+        snprintf(alertMessage, sizeof(alertMessage), 
+                "Corriente excesiva: %.2fA (límite: %.2fA)", 
+                pack.getCurrent(), params.maxCurrent);
+        BI_DEBUG_WARNING(g_BatteryLogger, "%s", alertMessage);
+        biParams.updateStateValue("lastError", alertMessage, strlen(alertMessage), true);
+        alertTriggered = true;
+    }
+    
+    // Verificar voltaje de apagado
+    if (pack.getTotalVoltage() < (params.shutdownVoltage * cells.size())) {
+        snprintf(alertMessage, sizeof(alertMessage), 
+                "Voltaje crítico del pack: %.2fV (límite: %.2fV)", 
+                pack.getTotalVoltage(), params.shutdownVoltage * cells.size());
+        BI_DEBUG_ERROR(g_BatteryLogger, "%s", alertMessage);
+        biParams.updateStateValue("lastError", alertMessage, strlen(alertMessage), true);
+        alertTriggered = true;
+        
+        // Si está habilitado el auto-shutdown, apagar el sistema
+        if (params.deepSleepEnabled) {
+            BI_DEBUG_ERROR(g_BatteryLogger, "Iniciando apagado automático por voltaje crítico");
+            // Aquí se podría implementar el apagado real del sistema
+        }
+    }
+    
+    if (alertTriggered) {
+        biParams.incrementCounter("errorCount", 1, true);
+        lastAlertTime = currentTime;
+    }
+}
+
+// Función para verificar necesidad de balanceo
+bool BatteryController::shouldStartBalancing() {
+    if (!biParams.isInitialized()) return false;
+    
+    DeviceParams& params = biParams.getParams();
+    if (!params.balancingEnabled) return false;
+    
+    const Pack& pack = g_batteryController.getPack();
+    const std::vector<Cell>& cells = pack.getCells();
+    
+    if (cells.size() < 2) return false;
+    
+    // Encontrar voltajes mínimo y máximo
+    float minVoltage = cells[0].getVoltage();
+    float maxVoltage = cells[0].getVoltage();
+    
+    for (const auto& cell : cells) {
+        if (cell.getVoltage() < minVoltage) {
+            minVoltage = cell.getVoltage();
+        }
+        if (cell.getVoltage() > maxVoltage) {
+            maxVoltage = cell.getVoltage();
+        }
+    }
+    
+    float voltageDifference = maxVoltage - minVoltage;
+    
+    BI_DEBUG_INFO(g_BatteryLogger, "Diferencia de voltaje entre celdas: %.3fV (umbral: %.3fV)", 
+                 voltageDifference, params.balancingThreshold);
+    
+    return voltageDifference > params.balancingThreshold;
 }
 
 // Función de inicialización global
