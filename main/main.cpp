@@ -16,7 +16,7 @@ extern "C" void app_main(void)
 
     BI_DEBUG_INFO(g_mainLogger, "Inicializacion del sistema");
 
-    // Inicializa parametros
+    // Inicializa parametros y actualiza contadores arranque
     biParams.init();
     biParams.incrementCounter("bootCount");
 
@@ -31,8 +31,6 @@ extern "C" void app_main(void)
 
     // Inicializa firebase
     firebase_controller_init();
-
-
 
     while (1) {
         // Agrega tu código principal aqui

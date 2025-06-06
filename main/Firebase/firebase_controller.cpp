@@ -1,6 +1,6 @@
 /**
  * @file firebase_example.c
- * @brief Ejemplo de uso de la librer�a Firebase Realtime Database para ESP32 con ESP-IDF
+ * @brief Firebase Realtime Database para ESP32 con ESP-IDF
  */
 
 #include "bi_firebase.h"
@@ -19,7 +19,9 @@ LoggerPtr g_FirebaseLogger;
 // Manejador para Firebase
 firebase_handle_t *firebase_handle = NULL;
 
-static void procesarComando(const char* tipo, cJSON* valor);
+static void procesarComando(const char* tipo, cJSON* valor, const char* comando_id);
+static bool update_command_status(const char* comando_id, const char* status, const char* result = nullptr);
+static cJSON* create_firebase_server_timestamp();
 
 void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *value) {
     BI_DEBUG_INFO(g_FirebaseLogger, "Evento de escucha firebase recibido: %d, data: %i", event_id, (uint32_t)(data));
@@ -39,9 +41,18 @@ void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *v
                     cJSON *name = cJSON_GetObjectItem(json, "name");
                     if (name && cJSON_IsString(name)) {
                         strncpy(params.deviceName, name->valuestring, sizeof(params.deviceName) - 1);
-                        params.deviceName[sizeof(params.deviceName) - 1] = '\0'; // Asegurar terminación nula
+                        params.deviceName[sizeof(params.deviceName) - 1] = '\0';
                         config_changed = true;
                         BI_DEBUG_INFO(g_FirebaseLogger, "Nombre dispositivo actualizado: %s", params.deviceName);
+                    }
+                    
+                    // Actualizar modelo del dispositivo
+                    cJSON *model = cJSON_GetObjectItem(json, "model");
+                    if (model && cJSON_IsString(model)) {
+                        strncpy(params.deviceModel, model->valuestring, sizeof(params.deviceModel) - 1);
+                        params.deviceModel[sizeof(params.deviceModel) - 1] = '\0';
+                        config_changed = true;
+                        BI_DEBUG_INFO(g_FirebaseLogger, "Modelo dispositivo actualizado: %s", params.deviceModel);
                     }
                     
                     // Actualizar intervalo de muestreo (reporting.interval)
@@ -57,21 +68,78 @@ void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *v
                         }
                     }
                     
-                    // Actualizar configuración de deep sleep
+                    // Actualizar configuración de power
                     cJSON *power = cJSON_GetObjectItem(json, "power");
                     if (power && cJSON_IsObject(power)) {
                         cJSON *autoShutdown = cJSON_GetObjectItem(power, "autoShutdown");
                         if (autoShutdown && cJSON_IsBool(autoShutdown)) {
                             params.deepSleepEnabled = cJSON_IsTrue(autoShutdown);
                             config_changed = true;
-                            BI_DEBUG_INFO(g_FirebaseLogger, "Deep sleep %s", params.deepSleepEnabled ? "activado" : "desactivado");
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Auto shutdown %s", params.deepSleepEnabled ? "activado" : "desactivado");
                         }
                         
-                        cJSON *shutdownTime = cJSON_GetObjectItem(power, "shutdownTime");
-                        if (shutdownTime && cJSON_IsNumber(shutdownTime)) {
-                            params.deepSleepTime = shutdownTime->valueint;
+                        cJSON *shutdownVoltage = cJSON_GetObjectItem(power, "shutdownVoltage");
+                        if (shutdownVoltage && cJSON_IsNumber(shutdownVoltage)) {
+                            params.shutdownVoltage = (float)shutdownVoltage->valuedouble;
                             config_changed = true;
-                            BI_DEBUG_INFO(g_FirebaseLogger, "Tiempo deep sleep actualizado: %lu segundos", params.deepSleepTime);
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Voltaje de apagado actualizado: %.2fV", params.shutdownVoltage);
+                        }
+                        
+                        cJSON *maxCurrent = cJSON_GetObjectItem(power, "maxCurrent");
+                        if (maxCurrent && cJSON_IsNumber(maxCurrent)) {
+                            params.maxCurrent = (float)maxCurrent->valuedouble;
+                            config_changed = true;
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Corriente máxima actualizada: %.2fA", params.maxCurrent);
+                        }
+                    }
+                    
+                    // Actualizar configuración de alertas
+                    cJSON *alerts = cJSON_GetObjectItem(json, "alerts");
+                    if (alerts && cJSON_IsObject(alerts)) {
+                        cJSON *highTemp = cJSON_GetObjectItem(alerts, "highTemp");
+                        if (highTemp && cJSON_IsNumber(highTemp)) {
+                            params.alertHighTemp = (float)highTemp->valuedouble;
+                            config_changed = true;
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Alerta temperatura alta: %.1f°C", params.alertHighTemp);
+                        }
+                        
+                        cJSON *lowTemp = cJSON_GetObjectItem(alerts, "lowTemp");
+                        if (lowTemp && cJSON_IsNumber(lowTemp)) {
+                            params.alertLowTemp = (float)lowTemp->valuedouble;
+                            config_changed = true;
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Alerta temperatura baja: %.1f°C", params.alertLowTemp);
+                        }
+                        
+                        cJSON *highVoltage = cJSON_GetObjectItem(alerts, "highVoltage");
+                        if (highVoltage && cJSON_IsNumber(highVoltage)) {
+                            params.alertHighVoltage = (float)highVoltage->valuedouble;
+                            config_changed = true;
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Alerta voltaje alto: %.2fV", params.alertHighVoltage);
+                        }
+                        
+                        cJSON *lowVoltage = cJSON_GetObjectItem(alerts, "lowVoltage");
+                        if (lowVoltage && cJSON_IsNumber(lowVoltage)) {
+                            params.alertLowVoltage = (float)lowVoltage->valuedouble;
+                            config_changed = true;
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Alerta voltaje bajo: %.2fV", params.alertLowVoltage);
+                        }
+                    }
+                    
+                    // Actualizar configuración de balanceo
+                    cJSON *balancing = cJSON_GetObjectItem(json, "balancing");
+                    if (balancing && cJSON_IsObject(balancing)) {
+                        cJSON *enabled = cJSON_GetObjectItem(balancing, "enabled");
+                        if (enabled && cJSON_IsBool(enabled)) {
+                            params.balancingEnabled = cJSON_IsTrue(enabled);
+                            config_changed = true;
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Balanceo %s", params.balancingEnabled ? "activado" : "desactivado");
+                        }
+                        
+                        cJSON *threshold = cJSON_GetObjectItem(balancing, "threshold");
+                        if (threshold && cJSON_IsNumber(threshold)) {
+                            params.balancingThreshold = (float)threshold->valuedouble;
+                            config_changed = true;
+                            BI_DEBUG_INFO(g_FirebaseLogger, "Umbral de balanceo: %.3fV", params.balancingThreshold);
                         }
                     }
                     
@@ -90,42 +158,33 @@ void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *v
         }
         case RTDB_COMMAND_CHANGED:
         {
-            // IMPORTANTE: No modificar los valores de Firebase directamente aquí
-            // En su lugar, sólo leer y procesar, sin llamar a firebase_free_value()
             if (value && value->type == FIREBASE_DATA_TYPE_JSON && value->data.string_val) {
                 cJSON *json = cJSON_Parse(value->data.string_val);
                 if (json) {
-                    // Procesar todos los comandos
-                    // Para objetos individuales
-                    if (cJSON_IsObject(json)) {
-                        cJSON *type = cJSON_GetObjectItem(json, "type");
-                        cJSON *cmd_value = cJSON_GetObjectItem(json, "value");
-                        cJSON *status = cJSON_GetObjectItem(json, "status");
-                        
-                        // Solo procesar comandos pendientes
-                        if (type && cmd_value && status && 
-                            cJSON_IsString(type) && 
-                            cJSON_IsString(status) && 
-                            strcmp(status->valuestring, "pending") == 0) {
+                    // Iterar sobre todos los comandos en el objeto
+                    cJSON *comando = NULL;
+                    cJSON_ArrayForEach(comando, json) {
+                        if (cJSON_IsObject(comando)) {
+                            cJSON *type = cJSON_GetObjectItem(comando, "type");
+                            cJSON *cmd_value = cJSON_GetObjectItem(comando, "value");
+                            cJSON *status = cJSON_GetObjectItem(comando, "status");
                             
-                            procesarComando(type->valuestring, cmd_value);
-                        }
-                    }
-                    // Para arrays de comandos
-                    else if (cJSON_IsArray(json)) {
-                        for (int i = 0; i < cJSON_GetArraySize(json); i++) {
-                            cJSON *cmd = cJSON_GetArrayItem(json, i);
-                            if (cJSON_IsObject(cmd)) {
-                                cJSON *type = cJSON_GetObjectItem(cmd, "type");
-                                cJSON *cmd_value = cJSON_GetObjectItem(cmd, "value");
-                                cJSON *status = cJSON_GetObjectItem(cmd, "status");
+                            // Solo procesar comandos pendientes
+                            if (type && cmd_value && status && 
+                                cJSON_IsString(type) && 
+                                cJSON_IsString(status) && 
+                                strcmp(status->valuestring, "pending") == 0) {
                                 
-                                if (type && cmd_value && status && 
-                                    cJSON_IsString(type) && 
-                                    cJSON_IsString(status) && 
-                                    strcmp(status->valuestring, "pending") == 0) {
+                                // Obtener el ID del comando (clave del objeto)
+                                const char* comando_id = comando->string;
+                                if (comando_id) {
+                                    BI_DEBUG_INFO(g_FirebaseLogger, "Procesando comando ID: %s", comando_id);
                                     
-                                    procesarComando(type->valuestring, cmd_value);
+                                    // Marcar como recibido inmediatamente
+                                    update_command_status(comando_id, "received");
+                                    
+                                    // Procesar el comando
+                                    procesarComando(type->valuestring, cmd_value, comando_id);
                                 }
                             }
                         }
@@ -142,42 +201,147 @@ void firebase_listen_callback(void *data, int event_id, firebase_data_value_t *v
 }
 
 // Función auxiliar para procesar comandos
-static void procesarComando(const char* tipo, cJSON* valor) {
-    if (!tipo || !valor) return;
+static void procesarComando(const char* tipo, cJSON* valor, const char* comando_id) {
+    if (!tipo || !valor || !comando_id) return;
     
-    BI_DEBUG_INFO(g_FirebaseLogger, "Procesando comando: %s", tipo);
+    BI_DEBUG_INFO(g_FirebaseLogger, "Procesando comando: %s (ID: %s)", tipo, comando_id);
+    
+    bool comando_exitoso = false;
+    char resultado[128] = {0};
     
     if (strcmp(tipo, "power") == 0 && cJSON_IsString(valor)) {
         if (strcmp(valor->valuestring, "on") == 0) {
             // Código para encender
             BI_DEBUG_INFO(g_FirebaseLogger, "Comando: Encender sistema");
+            comando_exitoso = true;
+            strcpy(resultado, "Sistema encendido correctamente");
         } else if (strcmp(valor->valuestring, "off") == 0) {
             // Código para apagar
             BI_DEBUG_INFO(g_FirebaseLogger, "Comando: Apagar sistema");
+            comando_exitoso = true;
+            strcpy(resultado, "Sistema apagado correctamente");
+        } else {
+            strcpy(resultado, "Valor de power inválido");
         }
     } 
     else if (strcmp(tipo, "balancing") == 0 && cJSON_IsString(valor)) {
         if (strcmp(valor->valuestring, "start") == 0) {
             // Iniciar balanceo
             BI_DEBUG_INFO(g_FirebaseLogger, "Comando: Iniciar balanceo");
+            comando_exitoso = true;
+            strcpy(resultado, "Balanceo iniciado correctamente");
         } else if (strcmp(valor->valuestring, "stop") == 0) {
             // Detener balanceo
             BI_DEBUG_INFO(g_FirebaseLogger, "Comando: Detener balanceo");
+            comando_exitoso = true;
+            strcpy(resultado, "Balanceo detenido correctamente");
+        } else {
+            strcpy(resultado, "Valor de balancing inválido");
         }
     }
     else if (strcmp(tipo, "reboot") == 0) {
         // Reiniciar dispositivo
         BI_DEBUG_INFO(g_FirebaseLogger, "Comando: Reiniciar sistema");
-        esp_restart(); // Descomentar para implementar
+        update_command_status(comando_id, "completed", "Sistema reiniciándose...");
+        
+        // Esperar un poco para que se envíe la respuesta antes del reinicio
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        esp_restart(); 
+        return; // No llegará aquí, pero por claridad
+    }
+    else {
+        snprintf(resultado, sizeof(resultado), "Comando desconocido: %s", tipo);
     }
     
-    // Para marcar como completado, debes llamar a update_command_status() después
-    // Implementar una función separada para ello
+    // Actualizar estado del comando
+    const char* estado_final = comando_exitoso ? "completed" : "failed";
+    update_command_status(comando_id, estado_final, resultado);
 }
+
+// Función para actualizar el estado de un comando en Firebase
+static bool update_command_status(const char* comando_id, const char* status, const char* result) {
+    if (!comando_id || !status) {
+        return false;
+    }
+    
+    // Verificar conectividad
+    if (!check_firebase_connectivity()) {
+        return false;
+    }
+    
+    // Crear objeto JSON para la actualización
+    cJSON *update_json = cJSON_CreateObject();
+    if (!update_json) {
+        return false;
+    }
+    
+    cJSON_AddStringToObject(update_json, "status", status);
+    
+    // Usar Firebase Server Timestamp
+    if (strcmp(status, "received") == 0) {
+        cJSON *timestamp = create_firebase_server_timestamp();
+        if (timestamp) {
+            cJSON_AddItemToObject(update_json, "receivedAt", timestamp);
+        }
+    } else if (strcmp(status, "completed") == 0 || strcmp(status, "failed") == 0) {
+        cJSON *timestamp = create_firebase_server_timestamp();
+        if (timestamp) {
+            cJSON_AddItemToObject(update_json, "completedAt", timestamp);
+        }
+        if (result) {
+            cJSON_AddStringToObject(update_json, "result", result);
+        }
+    }
+    
+    // Convertir a string
+    char *json_string = cJSON_PrintUnformatted(update_json);
+    cJSON_Delete(update_json);
+    
+    if (!json_string) {
+        return false;
+    }
+    
+    // Crear valor Firebase
+    firebase_data_value_t value;
+    bool success = false;
+    
+    if (firebase_set_json(&value, json_string)) {
+        // Construir la ruta del comando específico
+        std::string command_path = device_path + "/commands/" + comando_id;
+        
+        // Actualizar en Firebase
+        if (firebase_update(firebase_handle, command_path.c_str(), &value)) {
+            BI_DEBUG_INFO(g_FirebaseLogger, "Estado del comando %s actualizado a: %s", comando_id, status);
+            success = true;
+        } else {
+            BI_DEBUG_ERROR(g_FirebaseLogger, "Error al actualizar estado del comando %s", comando_id);
+        }
+        
+        firebase_free_value(&value);
+    }
+    
+    free(json_string);
+    return success;
+}
+
+// Función para crear timestamp de servidor Firebase
+static cJSON* create_firebase_server_timestamp() {
+    cJSON *timestamp_obj = cJSON_CreateObject();
+    if (timestamp_obj) {
+        cJSON *sv = cJSON_CreateString("timestamp");
+        if (sv) {
+            cJSON_AddItemToObject(timestamp_obj, ".sv", sv);
+        } else {
+            cJSON_Delete(timestamp_obj);
+            timestamp_obj = NULL;
+        }
+    }
+    return timestamp_obj;
+}
+
 // Inicializar Firebase y autenticarse
 bool init_firebase(void) {
     // Inicializar el logger
-
     g_FirebaseLogger = createLogger("FIREBASE_CONTROLLER", INFO, true);
 
     // Configurar Firebase
@@ -384,9 +548,6 @@ bool store_battery_history(const battery_cell_t* cells_data, uint8_t num_cells,
         return false;
     }
     
-    // Obtener timestamp actual en milisegundos
-    int64_t timestamp = esp_timer_get_time() / 1000; // Convertir microsegundos a milisegundos
-    
     // Crear objeto JSON principal
     cJSON *json = cJSON_CreateObject();
     if (!json) {
@@ -394,8 +555,15 @@ bool store_battery_history(const battery_cell_t* cells_data, uint8_t num_cells,
         return false;
     }
     
-    // Añadir timestamp
-    cJSON_AddNumberToObject(json, "timestamp", timestamp);
+    // Obtener timestamp de Firebase (usando Server Timestamp para sincronización)
+    cJSON *timestamp_obj = create_firebase_server_timestamp();
+    if (timestamp_obj) {
+        cJSON_AddItemToObject(json, "timestamp", timestamp_obj);
+    } else {
+        // Fallback al timestamp local si falla crear el server timestamp
+        int64_t local_timestamp = esp_timer_get_time() / 1000;
+        cJSON_AddNumberToObject(json, "timestamp", local_timestamp);
+    }
     
     // Crear array JSON para las celdas
     cJSON *cells_array = cJSON_CreateArray();
@@ -476,10 +644,26 @@ bool store_battery_history(const battery_cell_t* cells_data, uint8_t num_cells,
                 
                 // También actualizar el último timestamp en los metadatos
                 firebase_data_value_t timestamp_value;
-                if (firebase_set_int(&timestamp_value, timestamp)) {
-                    std::string last_update_path = device_path + "/lastUpdate";
-                    firebase_set(firebase_handle, last_update_path.c_str(), &timestamp_value);
-                    firebase_free_value(&timestamp_value);
+                cJSON *server_timestamp = create_firebase_server_timestamp();
+                if (server_timestamp) {
+                    char *timestamp_str = cJSON_PrintUnformatted(server_timestamp);
+                    if (timestamp_str) {
+                        if (firebase_set_json(&timestamp_value, timestamp_str)) {
+                            std::string last_update_path = device_path + "/lastUpdate";
+                            firebase_set(firebase_handle, last_update_path.c_str(), &timestamp_value);
+                            firebase_free_value(&timestamp_value);
+                        }
+                        free(timestamp_str);
+                    }
+                    cJSON_Delete(server_timestamp);
+                } else {
+                    // Fallback al timestamp local
+                    int64_t local_timestamp = esp_timer_get_time() / 1000;
+                    if (firebase_set_int(&timestamp_value, local_timestamp)) {
+                        std::string last_update_path = device_path + "/lastUpdate";
+                        firebase_set(firebase_handle, last_update_path.c_str(), &timestamp_value);
+                        firebase_free_value(&timestamp_value);
+                    }
                 }
                 
                 result = true;
@@ -504,6 +688,7 @@ bool store_battery_history(const battery_cell_t* cells_data, uint8_t num_cells,
     free(json_string);
     return result;
 }
+
 /**
  * @brief Actualiza los datos del pack de la batería en Firebase
  * @param voltage Voltaje total del pack en V
@@ -638,7 +823,7 @@ void firebase_task(void *pvParameters) {
             }
         }
     
-        // Dormir hasta el pr�ximo ciclo usando el intervalo de muestreo configurado
+        // Dormir hasta el próximo ciclo usando el intervalo de muestreo configurado
         vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(params.sampleInterval * 1000));
     }
 }

@@ -1,4 +1,4 @@
-// battery_controller.cpp
+/// battery_controller.cpp
 #include "battery_controller.h"
 #include "bi_debug.h"
 #include "../Firebase/firebase_controller.h"
@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
+#include "../custom_config.h"
 
 // Logger para el controlador de batería
 static LoggerPtr g_BatteryLogger;
@@ -219,7 +220,7 @@ void BatteryController::batteryTask(void* pvParameters) {
 // Función de inicialización global
 void battery_controller_init() {
     // Inicializar el logger
-    g_BatteryLogger = createLogger("BATTERY_CTRL", INFO, true);
+    g_BatteryLogger = createLogger("BATTERY_CTRL", INFO, DEBUG_BATTERY);
     
     BI_DEBUG_INFO(g_BatteryLogger, "Initializing battery controller");
     

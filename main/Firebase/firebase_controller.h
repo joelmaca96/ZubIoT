@@ -62,6 +62,10 @@ bool update_battery_pack(float voltage, float current, float power, const char* 
 bool store_battery_history(const battery_cell_t* cells_data, uint8_t num_cells, 
     float voltage, float current, float power, const char* status);
 
+/**
+ * @brief Verifica si hay conectividad adecuada para operaciones con Firebase
+ * @return true si hay conectividad completa, false en caso contrario
+ */
 bool check_firebase_connectivity();
 
 #endif // FIREBASE_CONTROLLER_H

@@ -99,5 +99,6 @@
     "titleBar.activeForeground": "#F7FAF9"
   },
   "idf.portWin": "COM15",
-  "C_Cpp.errorSquiggles": "enabled"
+  "C_Cpp.errorSquiggles": "enabled",
+  "idf.pythonInstallPath": "/usr/bin/python3"
 }

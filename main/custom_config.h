@@ -15,12 +15,13 @@
     #define GLOBAL_DEBUG (1)
     #if GLOBAL_DEBUG
 
-        #define DEBUG_WIFI     (1)
+        #define DEBUG_WIFI     (0)
         #define DEBUG_RTC      (1)
         #define DEBUG_FIREBASE (1)
-        #define DEBUG_PARAMS   (1)
+        #define DEBUG_PARAMS   (0)
         #define DEBUG_METERING (0)
         #define DEBUG_MAIN     (1)
+        #define DEBUG_BATTERY  (0)
     #endif
 
 
